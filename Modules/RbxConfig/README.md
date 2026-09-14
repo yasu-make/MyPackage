@@ -1,35 +1,35 @@
 # RbxConfig
 
-Roblox `ConfigService` のシングルトンラッパーです。サーバーでクラウド設定を読み、クライアントへ同期します。
+A singleton wrapper around Roblox `ConfigService`. The server reads cloud config and syncs it to clients.
 
-クラウド上の設定を使う場合は本モジュール、Studio 上の Configuration / Attribute / テーブルなどローカル設定を使う場合は [BetterConfig](../BetterConfig/README.md) を使ってください。
+Use this module for cloud-hosted settings. For local Studio config (Configuration instances, Attributes, or tables), use [BetterConfig](../BetterConfig/README.md).
 
-## インストール
+## Installation
 
-Wally パッケージ名は `zac134/rbx-config` です。`sleitnick/signal` に依存します。
+Wally package name: `zac134/rbx-config`. Depends on `sleitnick/signal`.
 
 ```toml
 [dependencies]
 RbxConfig = "zac134/rbx-config@0.0.2"
 ```
 
-手動で入れる場合は `Modules/RbxConfig/` を ReplicatedStorage にコピーし、同じく `sleitnick/signal@^2.0` を用意してください。モジュールは `script.Parent.signal` を require します。
+For a manual install, copy `Modules/RbxConfig/` into ReplicatedStorage and also provide `sleitnick/signal@^2.0`. The module `require`s `script.Parent.signal`.
 
-利用前に [Creator Dashboard](https://create.roblox.com/) の **Configure → Config Service** でキーを作成してください。キー名は `InitServer` / `InitClient` に渡すデフォルトのテーブルと揃えます。詳細は [ConfigService のドキュメント](https://create.roblox.com/docs/cloud/open-cloud/usage-configuration) を参照してください。
+Before use, create keys in [Creator Dashboard](https://create.roblox.com/) under **Configure → Config Service**. Key names must match the defaults table passed to `InitServer` / `InitClient`. See the [ConfigService documentation](https://create.roblox.com/docs/cloud/open-cloud/usage-configuration).
 
-## クイックスタート
+## Quick Start
 
-サーバーとクライアントで同じデフォルトのテーブルを渡します。共有モジュールに切り出すのが簡単です。
+Pass the same defaults table on the server and the client. Putting it in a shared module is the simplest approach.
 
 ```lua
--- 共有デフォルト（例: ReplicatedStorage/shared/RbxConfigSetting）
+-- Shared defaults (e.g. ReplicatedStorage/shared/RbxConfigSetting)
 return {
     max_players_per_team = 4,
 }
 ```
 
 ```lua
--- サーバー
+-- Server
 local RbxConfig = require(ReplicatedStorage.Modules.RbxConfig):InitServer(configSettings)
 print(RbxConfig:GetValue("max_players_per_team"))
 
@@ -39,77 +39,77 @@ end)
 ```
 
 ```lua
--- クライアント
+-- Client
 local RbxConfig = require(ReplicatedStorage.Modules.RbxConfig):InitClient(configSettings)
 print(RbxConfig:GetValue("max_players_per_team"))
 ```
 
-より長い実例は次を参照してください。
+Longer examples:
 
 - [`/Examples/shared/RbxConfigSetting.luau`](../../Examples/shared/RbxConfigSetting.luau)
 - [`/Examples/server/RbxConfig.server.luau`](../../Examples/server/RbxConfig.server.luau)
 - [`/Examples/client/RbxConfig.client.luau`](../../Examples/client/RbxConfig.client.luau)
 
-## 動作の要点
+## Behavior
 
-- シングルトンです。`InitServer` / `InitClient` はそれぞれ一度だけ呼びます。二度目は警告して無視します。
-- サーバー初期化時はまずデフォルトを `_values` に入れ、続けて `ConfigService:GetConfigAsync()` でグローバルスナップショットを 1 回取得して同じキーを上書きします。取得失敗時はデフォルトのままです。
-- クライアントは `InitClient` 時に `RemoteFunction`（`RbxConfigRemoteFunction`）でサーバーの `_values` をまとめて取得します。失敗時は渡したデフォルトを使います。
-- その後の更新は `RemoteEvent`（`RbxConfigRemoteEvent`）でキー単位に配信されます。
+- Singleton. Call `InitServer` / `InitClient` once each. A second call warns and is ignored.
+- On server init, defaults are copied into `_values`, then `ConfigService:GetConfigAsync()` fetches a global snapshot once and overwrites the same keys. If that fetch fails, defaults remain.
+- On `InitClient`, the client requests the server's `_values` via `RemoteFunction` (`RbxConfigRemoteFunction`). On failure it uses the defaults you passed.
+- Later updates are delivered per key via `RemoteEvent` (`RbxConfigRemoteEvent`).
 
-### 値の優先順位
+### Value priority
 
-1. テスト上書き（`SetTestingValue`。サーバーセッション内のみ）
-2. スナップショット由来の `_values`
-3. `InitServer` / `InitClient` に渡したデフォルト
+1. Test override (`SetTestingValue`; server-session only)
+2. Snapshot-backed `_values`
+3. Defaults passed to `InitServer` / `InitClient`
 
-### 注意（現在の実装）
+### Current limitations
 
-**遅延監視（lazy observation）**  
-ConfigService のライブ更新を購読し、クライアントへ配信するのは `GetValueChangedSignal` を呼んだキーだけです。`GetValue` だけで読んでいるキーは、初期スナップショットのまま残ることがあります。クラウド側を変えても自動では追従しません。ライブ更新が必要なら、そのキーで `GetValueChangedSignal` を呼んでください。
+**Lazy observation**  
+ConfigService live updates are subscribed and pushed to clients only for keys that have had `GetValueChangedSignal` called. Keys read only with `GetValue` may stay at the initial snapshot. Changing the cloud value does not update those keys automatically. Call `GetValueChangedSignal` on a key if you need live updates.
 
-**プレイヤー別スナップショット**  
-`GetValueForPlayer` は初回で `ConfigService:GetConfigForPlayerAsync` の結果をキャッシュし、`PlayerRemoving` で捨てます。キャッシュ後は再取得も `Refresh` もしないので、入室後のクラウド変更は反映されません。
+**Per-player snapshots**  
+`GetValueForPlayer` caches `ConfigService:GetConfigForPlayerAsync` on first use and drops the cache on `PlayerRemoving`. It does not refetch or `Refresh`, so cloud changes after join are not applied.
 
-**テスト上書き**  
-`SetTestingValue` / `ClearTestingValue` はサーバープロセス限りです。再起動で消えます。設定すると全クライアントへ即座に配信します（ライブ監視の有無は問いません）。本番ロジックには使わないでください。
+**Test overrides**  
+`SetTestingValue` / `ClearTestingValue` last only for the server process. They are lost on restart. Setting an override immediately pushes to all clients (whether or not the key is being observed). Do not use this for production logic.
 
 ## API
 
 ### `InitServer(configSettings) → ServerConfigClass`
 
-サーバー用に初期化します。戻り値は `GetValue` / `GetValueChangedSignal` に加え、サーバー専用メソッドを持ちます。
+Initialize on the server. The return value includes `GetValue` / `GetValueChangedSignal` plus the server-only methods.
 
 ### `InitClient(configSettings) → RbxConfig`
 
-クライアント用に初期化します。戻り値は `GetValue` と `GetValueChangedSignal` のみです。`configSettings` はサーバーと同じキー・デフォルトにしてください。
+Initialize on the client. The return value has `GetValue` and `GetValueChangedSignal` only. `configSettings` should use the same keys and defaults as the server.
 
-### サーバー・クライアント共通
+### Shared (server and client)
 
-| メソッド | 説明 |
+| Method | Description |
 |---|---|
-| `GetValue(key)` | 上記の優先順位で現在値を返します。 |
-| `GetValueChangedSignal(key)` | 値が変わったときに発火する Signal（`Connect` / `Once` / `Wait`）。サーバーではこの呼び出しでそのキーの ConfigService 監視を開始します。クライアントではサーバーからの `RemoteEvent` を受けて発火します。 |
+| `GetValue(key)` | Returns the current value using the priority above. |
+| `GetValueChangedSignal(key)` | Signal that fires when the value changes (`Connect` / `Once` / `Wait`). On the server, this call starts ConfigService observation for that key. On the client, it fires when a `RemoteEvent` arrives from the server. |
 
-### サーバーのみ
+### Server only
 
-| メソッド | 説明 |
+| Method | Description |
 |---|---|
-| `GetValueForPlayer(key, player)` | プレイヤー向けスナップショットから値を返します。テスト上書きがあればそれを優先します。取得失敗時はグローバル値またはデフォルトに戻します。 |
-| `SetTestingValue(key, value)` | テスト上書きを設定し、シグナル発火と全クライアントへの配信を行います。 |
-| `ClearTestingValue(key)` | 上書きを外し、スナップショット（なければデフォルト）へ戻してクライアントへ配信します。 |
+| `GetValueForPlayer(key, player)` | Returns the player-targeted snapshot value. Test overrides win if set. On fetch failure, falls back to the global value or the default. |
+| `SetTestingValue(key, value)` | Sets a test override, fires the signal, and pushes to all clients. |
+| `ClearTestingValue(key)` | Clears the override, restores the snapshot (or default), and pushes to clients. |
 
-## BetterConfig との違い
+## Comparison with BetterConfig
 
 | | RbxConfig | BetterConfig |
 |---|---|---|
-| 設定の置き場 | クラウド（ConfigService） | ローカル（Configuration / Attribute / テーブル） |
-| サーバー | 必要 | 不要 |
-| 再起動なしの遠隔更新 | 監視しているキーのみ（上記の制限あり） | しない（ローカルのみ） |
-| プレイヤー別の値 | 初回キャッシュの `GetValueForPlayer` | なし |
+| Source | Cloud (ConfigService) | Local (Configuration / Attribute / table) |
+| Server | Required | Not required |
+| Remote update without restart | Observed keys only (see limitation above) | No (local only) |
+| Per-player values | First-call cached `GetValueForPlayer` | None |
 
-クラウドの A/B や機能フラグには RbxConfig、Studio 上のローカル設定には BetterConfig が向きます。
+Use RbxConfig for cloud A/B tests and feature flags. Use BetterConfig for local Studio config.
 
-## ライセンス
+## License
 
 MIT License
